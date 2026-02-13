@@ -1,138 +1,133 @@
-"""
-Implementing and Evaluating K-Means Clustering from Scratch
-
-This script:
-1. Generates synthetic data using make_blobs
-2. Implements K-Means using only NumPy
-3. Uses the Elbow Method (WCSS) to determine optimal K
-4. Compares results with sklearn KMeans
-"""
-
 import numpy as np
-from sklearn.datasets import make_blobs
-from sklearn.cluster import KMeans
-from sklearn.metrics import adjusted_rand_score
+import matplotlib.pyplot as plt
 
-# ==========================================================
+# -----------------------------
 # 1. Generate Synthetic Dataset
-# ==========================================================
+# -----------------------------
 
 np.random.seed(42)
 
-X, y_true = make_blobs(
-    n_samples=500,
-    centers=3,
-    cluster_std=1.0,
-    random_state=42
-)
+n_samples = 500
+n_per_cluster = n_samples // 3
 
-print("Dataset shape:", X.shape)
+# Create 3 non-linearly separable clusters (curved / circular pattern)
 
-# ==========================================================
-# 2. Custom K-Means Implementation (NumPy Only)
-# ==========================================================
+# Cluster 1 (circle)
+theta1 = np.random.uniform(0, 2*np.pi, n_per_cluster)
+r1 = np.random.normal(5, 0.5, n_per_cluster)
+x1 = np.c_[r1 * np.cos(theta1), r1 * np.sin(theta1)]
 
-def initialize_centroids(X, k):
-    indices = np.random.choice(X.shape[0], k, replace=False)
+# Cluster 2 (shifted circle)
+theta2 = np.random.uniform(0, 2*np.pi, n_per_cluster)
+r2 = np.random.normal(10, 0.5, n_per_cluster)
+x2 = np.c_[r2 * np.cos(theta2), r2 * np.sin(theta2)]
+
+# Cluster 3 (shifted blob)
+x3 = np.random.randn(n_per_cluster, 2) + np.array([15, 0])
+
+# Combine dataset
+X = np.vstack((x1, x2, x3))
+true_labels = np.array([0]*n_per_cluster + 
+                       [1]*n_per_cluster + 
+                       [2]*n_per_cluster)
+
+# ---------------------------------
+# 2. K-Means Implementation (NumPy)
+# ---------------------------------
+
+def initialize_centroids(X, K):
+    indices = np.random.choice(len(X), K, replace=False)
     return X[indices]
 
-def compute_distances(X, centroids):
-    # Vectorized Euclidean distance
-    return np.linalg.norm(X[:, np.newaxis] - centroids, axis=2)
-
-def assign_clusters(distances):
+def assign_clusters(X, centroids):
+    distances = np.linalg.norm(X[:, np.newaxis] - centroids, axis=2)
     return np.argmin(distances, axis=1)
 
-def update_centroids(X, labels, k):
-    new_centroids = []
-    for i in range(k):
-        cluster_points = X[labels == i]
-        new_centroids.append(cluster_points.mean(axis=0))
-    return np.array(new_centroids)
+def update_centroids(X, labels, K):
+    return np.array([X[labels == k].mean(axis=0) for k in range(K)])
 
-def compute_wcss(X, centroids, labels):
-    wcss = 0
-    for i in range(len(centroids)):
-        cluster_points = X[labels == i]
-        wcss += np.sum((cluster_points - centroids[i]) ** 2)
-    return wcss
+def compute_inertia(X, labels, centroids):
+    inertia = 0
+    for k in range(len(centroids)):
+        cluster_points = X[labels == k]
+        inertia += np.sum((cluster_points - centroids[k])**2)
+    return inertia
 
-def kmeans_custom(X, k, max_iters=300, tol=1e-4):
-    centroids = initialize_centroids(X, k)
-
-    for iteration in range(max_iters):
-        distances = compute_distances(X, centroids)
-        labels = assign_clusters(distances)
-        new_centroids = update_centroids(X, labels, k)
-
-        shift = np.linalg.norm(new_centroids - centroids)
-
-        if shift < tol:
+def kmeans(X, K, max_iters=100, tol=1e-4):
+    centroids = initialize_centroids(X, K)
+    
+    for _ in range(max_iters):
+        labels = assign_clusters(X, centroids)
+        new_centroids = update_centroids(X, labels, K)
+        
+        if np.all(np.abs(new_centroids - centroids) < tol):
             break
-
+        
         centroids = new_centroids
+    
+    inertia = compute_inertia(X, labels, centroids)
+    return labels, centroids, inertia
 
-    wcss = compute_wcss(X, centroids, labels)
+# ---------------------------------
+# 3. Elbow Method (K = 2 to 10)
+# ---------------------------------
 
-    return centroids, labels, wcss
+inertia_values = []
+K_range = range(2, 11)
 
+for K in K_range:
+    labels, centroids, inertia = kmeans(X, K)
+    inertia_values.append(inertia)
 
-# ==========================================================
-# 3. Elbow Method (K = 2 to 7)
-# ==========================================================
+# Plot Elbow Curve
+plt.figure()
+plt.plot(K_range, inertia_values, marker='o')
+plt.xlabel("Number of Clusters (K)")
+plt.ylabel("Inertia")
+plt.title("Elbow Method")
+plt.show()
 
-print("\nWCSS Values for K = 2 to 7:")
+# ---------------------------------
+# 4. Silhouette Score (NumPy only)
+# ---------------------------------
 
-wcss_values = []
-K_range = list(range(2, 8))
+def silhouette_score(X, labels):
+    n = len(X)
+    unique_labels = np.unique(labels)
+    silhouette_vals = []
+    
+    for i in range(n):
+        same_cluster = X[labels == labels[i]]
+        other_clusters = [X[labels == k] for k in unique_labels if k != labels[i]]
+        
+        # Mean intra-cluster distance
+        a = np.mean(np.linalg.norm(same_cluster - X[i], axis=1))
+        
+        # Mean nearest-cluster distance
+        b = min([np.mean(np.linalg.norm(cluster - X[i], axis=1)) 
+                 for cluster in other_clusters])
+        
+        silhouette_vals.append((b - a) / max(a, b))
+    
+    return np.mean(silhouette_vals)
 
-for k in K_range:
-    _, _, wcss = kmeans_custom(X, k)
-    wcss_values.append(wcss)
-    print(f"K = {k}, WCSS = {wcss:.2f}")
+# Choose optimal K (from elbow visually assumed K=3)
+optimal_K = 3
+labels_opt, centroids_opt, inertia_opt = kmeans(X, optimal_K)
 
-# Programmatic elbow detection using second derivative
-wcss_array = np.array(wcss_values)
-second_derivative = np.diff(wcss_array, 2)
-optimal_index = np.argmax(-second_derivative) + 1
-optimal_k = K_range[optimal_index]
+sil_score = silhouette_score(X, labels_opt)
 
-print("\nOptimal K detected by Elbow Method:", optimal_k)
+print("Final Centroids:\n", centroids_opt)
+print("Final Inertia:", inertia_opt)
+print("Silhouette Score:", sil_score)
 
+# ---------------------------------
+# 5. Final Cluster Visualization
+# ---------------------------------
 
-# ==========================================================
-# 4. Compare With sklearn KMeans
-# ==========================================================
-
-# Custom KMeans using optimal K
-custom_centroids, custom_labels, custom_wcss = kmeans_custom(X, optimal_k)
-
-# Sklearn KMeans
-sklearn_kmeans = KMeans(
-    n_clusters=optimal_k,
-    random_state=42,
-    n_init=20
-)
-
-sklearn_kmeans.fit(X)
-
-sklearn_centroids = sklearn_kmeans.cluster_centers_
-sklearn_labels = sklearn_kmeans.labels_
-
-# Sort centroids for fair comparison
-custom_sorted = np.sort(custom_centroids, axis=0)
-sklearn_sorted = np.sort(sklearn_centroids, axis=0)
-
-centroid_difference = np.abs(custom_sorted - sklearn_sorted)
-
-print("\nCustom Centroids:\n", custom_sorted)
-print("\nSklearn Centroids:\n", sklearn_sorted)
-print("\nAbsolute Centroid Differences:\n", centroid_difference)
-
-# Cluster similarity
-ari_score = adjusted_rand_score(custom_labels, sklearn_labels)
-
-print("\nAdjusted Rand Index (Cluster Agreement):", ari_score)
-
-print("\nCustom WCSS:", custom_wcss)
-print("Sklearn Inertia:", sklearn_kmeans.inertia_)
+plt.figure()
+plt.scatter(X[:, 0], X[:, 1], c=labels_opt)
+plt.scatter(centroids_opt[:, 0], centroids_opt[:, 1], marker='X', s=200)
+plt.title("Final Clusters with Centroids")
+plt.show()
+    
